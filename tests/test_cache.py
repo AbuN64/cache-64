@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +45,17 @@ def toolchains(tmp_path):
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
         return path
     return make
+
+
+START = ContentCache._start_collect  # the real one: the fixture below records in its place
+
+
+@pytest.fixture(autouse=True)
+def started(monkeypatch):
+    """The collects a finish started, recorded in place of a detached process."""
+    calls = []
+    monkeypatch.setattr(ContentCache, "_start_collect", lambda self, installed, keep: calls.append((installed, keep)))
+    return calls
 
 
 @pytest.fixture
@@ -180,7 +193,7 @@ def test_put_many_stores_every_item_under_the_put_keys(tmp_path):
 
 
 def test_version_is_one_exact_string():
-    assert abucache.__version__ == "0.3.2"
+    assert abucache.__version__ == "0.3.3"
 
 
 def test_failed_is_a_non_zero_exit_or_a_signal():
@@ -268,7 +281,7 @@ class TestReachability:
         absorb_touched({**taken, "elsewhere": ["x"]})
         absorb_touched({str(tmp_path / "store"): ["k:worker"]})
         cache.finish(root, "c")
-        manifests = [k for k in cache._cache.iterkeys() if k.startswith("manifest:")]
+        manifests = cache._manifest_keys()
         assert len(manifests) == 1
         assert json.loads(cache._cache.get(manifests[0]))["keys"] == ["k:mine", "k:worker"]
         forget()
@@ -307,13 +320,14 @@ class TestSizeBackstop:
         sql = "UPDATE Cache SET store_time = ? + rowid WHERE key LIKE 'k:%'"
         cache._cache._sql(sql, (now - 60,)).connection.commit()
 
-    def test_over_the_limit_collects_from_finish_without_waiting_a_day(self, tmp_path, monkeypatch):
+    def test_over_the_limit_collects_from_finish_without_waiting_a_day(self, tmp_path, monkeypatch, started):
         cache = self.make(tmp_path, monkeypatch, [0.1])
         root = tmp_path / "p"
         root.mkdir()
         cache.finish(root, "c")  # first collect, stamps collect:last
-        calls = []
-        monkeypatch.setattr(cache, "collect", lambda *a: calls.append(a) or 0)
+        assert len(started) == 1
+        calls = started
+        calls.clear()
         cache.finish(root, "c")
         assert calls == []  # under the limit and a day not passed
         self.fill(cache)
@@ -429,3 +443,94 @@ def test_a_cache_marked_full_still_opens_and_reads(tmp_path):
     assert again.cached("k", "a", lambda: b"never") == b"1"
     with pytest.raises(store.CacheFull):
         again.put("k", "b", b"2")
+
+
+def module_level_check(identity: str) -> bool:
+    return identity == "kept"
+
+
+class TestCollectOffThePath:
+    """A due collect starts detached and the command never waits on it; manifests come from the key index alone."""
+
+    def test_a_due_finish_starts_a_detached_collect_and_never_collects_itself(self, tmp_path, monkeypatch, started):
+        cache = ContentCache(tmp_path / "store", 1 << 30)
+        monkeypatch.setattr(ContentCache, "collect", lambda *a, **k: pytest.fail("collect ran on the command path"))
+        root = tmp_path / "p"
+        root.mkdir()
+        cache.put("k", "a", b"1")
+        cache.finish(root, "c", module_level_check, 7)
+        assert started == [(module_level_check, 7)]
+        assert len(cache._manifest_keys()) == 1  # the manifest itself is written before the command returns
+
+    def test_the_detached_process_gets_no_descriptor_and_its_own_session(self, tmp_path, monkeypatch):
+        cache = ContentCache(tmp_path / "store", 1234)
+        seen = []
+        fake = SimpleNamespace(Popen=lambda argv, **kw: seen.append((argv, kw)), DEVNULL=subprocess.DEVNULL)
+        monkeypatch.setattr(store, "subprocess", fake)
+        START(cache, module_level_check, 5)
+        (argv, kw), = seen
+        assert argv == [sys.executable, "-m", "abucache.collect", str(tmp_path / "store"), "1234", "5",
+                        f"{__name__}:module_level_check"]
+        assert kw["start_new_session"] and kw["close_fds"] and kw["stdin"] == subprocess.DEVNULL
+        assert kw["stdout"].name == str(tmp_path / "store" / "collect.log")
+        assert sys.path[0] in kw["env"]["PYTHONPATH"].split(":") or not sys.path[0]
+
+    @pytest.mark.parametrize(("check", "name"), [
+        (store.everything, ""),
+        (module_level_check, f"{__name__}:module_level_check"),
+        (lambda identity: False, ""),
+    ])
+    def test_installed_travels_by_import_name(self, check, name):
+        assert store._name_of(check) == name
+        assert store.resolve(name) is (check if name else store.everything)
+
+    def test_manifests_are_one_range_of_the_key_index_and_no_key_scan(self, tmp_path, monkeypatch):
+        import diskcache
+        cache = ContentCache(tmp_path / "store", 1 << 30)
+        for i in range(50):
+            cache.put("k", str(i), b"v")
+        cache._write_manifest(str(tmp_path), "c", "", ["k:1"])
+        plan = " ".join(str(row) for row in cache._cache._sql(
+            "EXPLAIN QUERY PLAN SELECT key FROM Cache WHERE key >= ? AND key < ? AND raw = 1",
+            ("manifest:", "manifest;")).fetchall())
+        assert "Cache_key_raw" in plan and "SCAN" not in plan
+        monkeypatch.setattr(diskcache.Cache, "iterkeys", lambda *a, **k: pytest.fail("full key scan"))
+        assert len(cache._manifest_keys()) == 1
+        assert cache.collect(now=time.time() + 3 * 24 * 3600) == 49
+
+    def test_a_running_collect_makes_another_return_at_once(self, tmp_path):
+        cache = ContentCache(tmp_path / "store", 1 << 30)
+        cache._write_manifest(str(tmp_path / "gone"), "c", "", ["k:1"])
+        with open(tmp_path / "store" / "collect.lock", "a+b") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            assert cache.collect(now=time.time() + 3 * 24 * 3600) == 0
+            assert len(cache._manifest_keys()) == 1
+        cache.put("k", "1", b"v")
+        cache._cache._sql("UPDATE Cache SET store_time = 0 WHERE key = 'k:1'").connection.commit()
+        assert cache.collect(now=time.time() + 3 * 24 * 3600) == 1 and cache._manifest_keys() == []
+
+    def test_a_row_stored_again_after_the_scan_stays(self, tmp_path):
+        cache = ContentCache(tmp_path / "store", 1 << 30)
+        cache.put("k", "a", BIG)
+        cache.put("k", "b", BIG)
+        rows = cache._cache._sql("SELECT rowid, store_time FROM Cache ORDER BY key").fetchall()
+        cache._cache._sql("UPDATE Cache SET store_time = store_time + 1 WHERE key = 'k:b'").connection.commit()
+        assert cache._delete(rows) == 1
+        assert cache.get("k", "a") is None and cache.get("k", "b") == BIG
+        assert sum(1 for f in (tmp_path / "store").rglob("*.val")) == 1  # the value file went with its row
+
+    def test_the_collect_module_resolves_installed_and_collects(self, tmp_path, capsys):
+        from abucache import collect
+        cache = ContentCache(tmp_path / "store", 1 << 30)
+        root = tmp_path / "p"
+        root.mkdir()
+        cache.put("k", "old", b"1")
+        cache.put("k", "new", b"2")
+        cache._write_manifest(str(root), "gone", "", ["k:old"], time.time() - 10)
+        cache._write_manifest(str(root), "kept", "", ["k:new"])
+        cache._cache._sql("UPDATE Cache SET store_time = 0 WHERE key LIKE 'k:%'").connection.commit()
+        argv = [str(tmp_path / "store"), str(1 << 30), "20", f"{__name__}:module_level_check"]
+        assert collect.main(argv) == 0
+        assert "collected 1 entries" in capsys.readouterr().out
+        assert cache.get("k", "old") is None and cache.get("k", "new") == b"2"
+        assert collect.main([]) == 2

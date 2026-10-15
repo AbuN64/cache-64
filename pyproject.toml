@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abucache"
-version = "0.3.2"
+version = "0.3.3"
 description = "Content-addressed caches and the link fast path for N64 decompilation builds"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

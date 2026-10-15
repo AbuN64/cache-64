@@ -4,7 +4,7 @@ A Python package that holds the fast paths of an N64 decompilation build. unbake
 
 - `abucache.compile` caches a unit compile by content. The key is the preprocessed bytes, the exact commands and the hash of the tool files. Every ROM version whose input is identical shares one compile.
 - `abucache.link` filters the symbol file down to what the object references, builds the linker script and commands, and links with ld and one objcopy per section. Nothing reads the ROM.
-- `abucache.store` is the content cache that unbake keeps its step results in.
+- `abucache.store` is the content cache that unbake keeps its step results in. A command only records what it used. The collect of unused entries runs in its own detached process, so no command waits on it.
 
 > This is a personal tool. It is not officially maintained and may change or break without notice.
 
