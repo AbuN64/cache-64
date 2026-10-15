@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Needs python3 with pip, and rg. Installs the package and its test tools into a virtual environment under build/.
+if [ "$#" -ne 0 ]; then echo 'usage: ci/check' >&2; exit 1; fi
+for tool in python3 bash rg; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "missing tool: $tool" >&2; exit 1; }
+done
+cd "$(dirname "$0")/.."
+python3 -m venv build/venv
+build/venv/bin/pip install --quiet -e '.[dev]'
+status=0
+build/venv/bin/ruff check src tests || status=1
+build/venv/bin/pytest || status=1
+bin/hygiene || status=1
+exit "$status"
