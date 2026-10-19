@@ -5,9 +5,16 @@
 import logging
 import sys
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"
+CONTRACT = 1  # the generic API of ARCH DESIGN 2.2; a change to a signature or schema there bumps it
 
 log = logging.getLogger("abucache")
+
+
+def require(n: int) -> None:
+    """Every tool calls this at import: fail fast when the installed abucache speaks another contract."""
+    if n != CONTRACT:
+        raise RuntimeError(f"abucache contract {CONTRACT} is installed, but this tool needs contract {n}")
 
 
 def trace(enabled: bool = True) -> None:

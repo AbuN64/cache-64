@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abucache"
-version = "0.3.3"
+version = "0.4.0"
 description = "Content-addressed caches and the link fast path for N64 decompilation builds"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 dependencies = ["diskcache>=5.6"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-xdist", "ruff"]
+dev = ["pytest", "pytest-xdist", "ruff", "psutil"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

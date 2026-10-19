@@ -13,4 +13,6 @@ status=0
 build/venv/bin/ruff check src tests || status=1
 build/venv/bin/pytest || status=1
 bin/hygiene || status=1
+# abucache imports nothing from the tools that use it.
+if rg -n '^\s*(from|import) (unbake|abu_decomp|recipemaker|cake_taste)\b' src; then status=1; fi
 exit "$status"
