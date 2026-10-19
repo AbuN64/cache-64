@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 mo
-"""The one runtime file of a host: cores, workers, memory, named capacities, the cache and the stage log.
+"""The one runtime file of a host: cores, workers, memory, named capacities, the cache, the stage log
+and the event feed.
 
 `ABU_RUNTIME` names the file, else `~/.config/abu/runtime.toml`. Every key is required and an unknown key is an
 error, so a typo never silently falls back to a default."""
@@ -21,6 +22,7 @@ _SCHEMA: dict[str, tuple[str, ...]] = {
     "resources": ("cores", "workers", "worker_memory", "parent_memory", "reserve_memory"),
     "cache": ("dir", "bytes", "keep_seconds"),
     "stages": ("log_bytes",),
+    "events": ("feed", "slow_seconds", "overrun_percent"),
 }
 
 
@@ -45,6 +47,9 @@ class Runtime:
     cache_bytes: int
     cache_keep_seconds: int  # a cache root without git history keeps its entries live this long
     stage_log_bytes: int
+    feed: Path  # the event feed the shared path writes slow stages, slot waits and queue time to
+    slow_seconds: int  # a stage or wait this long (and over its expected time) is an event, running or closed
+    overrun_percent: int  # "over its expected time": at least this percent of the previous command's wall
     digest: str  # keys.digest of every resolved value above
 
 
@@ -63,13 +68,17 @@ def _int(file: str, key: str, value: Any, *, minimum: int = 1) -> int:
     return value
 
 
+def default_path() -> Path:
+    """The runtime file this process reads: `ABU_RUNTIME`, else `~/.config/abu/runtime.toml`."""
+    env = os.environ.get("ABU_RUNTIME")
+    return Path(env) if env else Path.home() / ".config" / "abu" / "runtime.toml"
+
+
 def load(path: Path | None = None) -> Runtime:
     """Read and resolve the runtime file. `"auto"` for `cores` is the CPUs this process may run on; for `workers`
     it is the smaller of that and `cores`, limited by memory: (usable memory - parent_memory) // worker_memory,
     at least 1."""
-    if path is None:
-        env = os.environ.get("ABU_RUNTIME")
-        path = Path(env) if env else Path.home() / ".config" / "abu" / "runtime.toml"
+    path = path or default_path()
     file = str(path)
     try:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -91,6 +100,7 @@ def load(path: Path | None = None) -> Runtime:
             if name not in names:
                 raise RuntimeConfigError(file, f"{section}.{name}", "is not a runtime key")
     res, cache, stages = document["resources"], document["cache"], document["stages"]
+    events = document["events"]
     worker_memory = _int(file, "resources.worker_memory", res["worker_memory"])
     parent_memory = _int(file, "resources.parent_memory", res["parent_memory"], minimum=0)
     reserve_memory = _int(file, "resources.reserve_memory", res["reserve_memory"], minimum=0)
@@ -106,6 +116,9 @@ def load(path: Path | None = None) -> Runtime:
     directory = cache["dir"]
     if not isinstance(directory, str) or not Path(directory).is_absolute():
         raise RuntimeConfigError(file, "cache.dir", "must be an absolute path")
+    feed = events["feed"]
+    if not isinstance(feed, str) or not Path(feed).is_absolute():
+        raise RuntimeConfigError(file, "events.feed", "must be an absolute path")
     values: dict[str, Any] = {
         "cores": cores,
         "workers": workers,
@@ -117,5 +130,8 @@ def load(path: Path | None = None) -> Runtime:
         "cache_bytes": _int(file, "cache.bytes", cache["bytes"]),
         "cache_keep_seconds": _int(file, "cache.keep_seconds", cache["keep_seconds"]),
         "stage_log_bytes": _int(file, "stages.log_bytes", stages["log_bytes"]),
+        "feed": Path(feed),
+        "slow_seconds": _int(file, "events.slow_seconds", events["slow_seconds"]),
+        "overrun_percent": _int(file, "events.overrun_percent", events["overrun_percent"], minimum=100),
     }
     return Runtime(**values, digest=keys.digest(values))

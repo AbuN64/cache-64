@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from abucache import stages
+from abucache import feed, stages
 
 
 class Refusal(Exception):
@@ -42,6 +42,10 @@ def _fresh(monkeypatch, tmp_path):
     monkeypatch.setattr(stages, "_project", "")
     monkeypatch.setattr(stages, "parent_memory", 0)
     monkeypatch.setattr(stages, "LOG_BYTES", 64 << 20)
+    monkeypatch.setattr(stages, "_runtime", None)
+    monkeypatch.setattr(feed, "path", None)
+    monkeypatch.setenv("ABU_RUNTIME", str(tmp_path / "no-runtime.toml"))  # no runtime file: no feed, no host wait log
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "no-xdg"))
 
 
 @pytest.fixture

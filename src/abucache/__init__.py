@@ -5,7 +5,7 @@
 import logging
 import sys
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 CONTRACT = 1  # the generic API of ARCH DESIGN 2.2; a change to a signature or schema there bumps it
 
 log = logging.getLogger("abucache")

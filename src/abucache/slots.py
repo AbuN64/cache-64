@@ -536,8 +536,18 @@ class Slots:
         directory = _pool(_runtime_base()) / f"cap-{name}"
         directory.mkdir(exist_ok=True)
         got: list[io.FileIO] = []
+        ticket: list[io.TextIOWrapper] = []  # this holder's place in the queue while it waits: held locked while alive
+
+        def ahead() -> list[Path]:
+            """The live waiters that asked before this one (every live waiter when it has not asked yet)."""
+            mine = Path(ticket[0].name).name if ticket else None
+            return [t for t in sorted(directory.glob("wait-*")) if (mine is None or t.name < mine) and _busy(t)]
 
         def attempt() -> bool:
+            """First come, first served: a free token is the oldest waiter's, so a newer holder never takes it ahead
+            of one that waited and the longest waiter is never starved."""
+            if ahead():
+                return False
             for index in range(size):
                 path = directory / f"token-{index}.lock"
                 if (slot := _try(path)) is not None:
@@ -558,13 +568,29 @@ class Slots:
                     found.append(int((directory / f"token-{index}.lock").read_text()))
             return found
 
+        def watched() -> list[int]:
+            """Who can free the way: the token holders and the waiters ahead (one that dies leaves its ticket
+            unlocked, which no file event shows)."""
+            return [*holders(), *(_pid(t) for t in ahead())]
+
         if not attempt():
             held = f"held by pids {', '.join(str(p) for p in holders()) or 'none live'}"
-            with stages.stage("pool.wait_capacity") as span:
-                span.add(items=size, findings=[stages.finding("pool.wait_capacity", f"{name}: {held}", blocking=False)])
-                began = time.perf_counter()
-                _until(directory, attempt, pids=holders, interval=CAPACITY_RECHECK)
-                stages.waited(time.perf_counter() - began, "slots", f"capacity {name} {held}")
+            queue = directory / f"wait-{time.time_ns():020d}-{os.getpid()}"
+            ticket.append(queue.open("a"))
+            fcntl.flock(ticket[0], fcntl.LOCK_EX)
+            try:
+                with stages.stage("pool.wait_capacity") as span:
+                    span.add(
+                        items=size,
+                        findings=[stages.finding("pool.wait_capacity", f"{name}: {held}", blocking=False)],
+                    )
+                    began = time.perf_counter()
+                    _until(directory, attempt, pids=watched, interval=CAPACITY_RECHECK)
+                    stages.waited(time.perf_counter() - began, "slots", f"capacity {name} {held}")
+            finally:
+                queue.unlink(missing_ok=True)
+                ticket.pop().close()
+                _signal(directory)  # the waiters behind may now be first
         try:
             yield
         finally:

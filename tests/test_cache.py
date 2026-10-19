@@ -195,7 +195,7 @@ def test_put_many_stores_every_item_under_the_put_keys(tmp_path):
 
 
 def test_version_is_one_exact_string():
-    assert abucache.__version__ == "0.6.0"
+    assert abucache.__version__ == "0.7.0"
 
 
 def test_failed_is_a_non_zero_exit_or_a_signal():

@@ -33,7 +33,10 @@ def test_a_blob_unbake_0_5_23_wrote_reads_back_so_the_rig_cache_stays_warm():
     blob = FIXTURE.read_bytes()
     assert blob[:1] == b"\x02"
     assert unpack(blob) == (True, OBJECT)
-    assert pack(OBJECT) == blob  # and what this writes is byte for byte what unbake wrote
+    # what this writes is byte for byte what unbake wrote: the frame of the same pickle is the same blob (the pickle
+    # itself is not compared: a frozenset pickles in the hash order of its process)
+    assert store._frame(zlib.decompress(blob[5:])) == blob
+    assert unpack(pack(OBJECT)) == (True, OBJECT)
 
 
 def test_the_packed_format_is_a_tag_a_crc_and_zlib_level_one_over_pickle_five():

@@ -29,6 +29,11 @@ keep_seconds = 3600
 
 [stages]
 log_bytes = 4096
+
+[events]
+feed = "{feed}"
+slow_seconds = {slow}
+overrun_percent = 150
 """
 
 
@@ -45,12 +50,20 @@ def rundir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def make_runtime(tmp_path: Path) -> Callable[..., runtime.Runtime]:
-    def make(workers: int = 4, capacities: dict[str, int] | None = None, reserve: int = 0) -> runtime.Runtime:
+    def make(
+        workers: int = 4, capacities: dict[str, int] | None = None, reserve: int = 0, slow: int = 60
+    ) -> runtime.Runtime:
         lines = "\n".join(f"{name} = {size}" for name, size in (capacities or {}).items())
         path = tmp_path / "runtime.toml"
         path.write_text(
             TEXT.format(
-                cores=max(workers, 8), workers=workers, reserve=reserve, capacities=lines, cache=tmp_path / "cache"
+                cores=max(workers, 8),
+                workers=workers,
+                reserve=reserve,
+                capacities=lines,
+                cache=tmp_path / "cache",
+                feed=tmp_path / "feed.jsonl",
+                slow=slow,
             )
         )
         return runtime.load(path)

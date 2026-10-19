@@ -29,6 +29,11 @@ keep_seconds = 3600
 
 [stages]
 log_bytes = 4096
+
+[events]
+feed = "{cache}/../feed.jsonl"
+slow_seconds = 60
+overrun_percent = 150
 """
 
 
@@ -49,6 +54,7 @@ def test_a_file_loads_into_one_frozen_record(tmp_path: Path) -> None:
     assert dict(value.capacities) == {"repro": 1}
     assert (value.cache_dir, value.cache_bytes, value.cache_keep_seconds) == (tmp_path / "cache", 1000000, 3600)
     assert value.stage_log_bytes == 4096
+    assert (value.feed, value.slow_seconds, value.overrun_percent) == (tmp_path / "cache/../feed.jsonl", 60, 150)
     with pytest.raises(AttributeError):
         value.cores = 1  # type: ignore[misc]
 
@@ -56,7 +62,12 @@ def test_a_file_loads_into_one_frozen_record(tmp_path: Path) -> None:
 def test_the_digest_covers_the_resolved_values_and_moves_with_each(tmp_path: Path) -> None:
     first = runtime.load(_file(tmp_path))
     assert first.digest == runtime.load(_file(tmp_path)).digest
-    for old, new in (("workers = 4", "workers = 3"), ("repro = 1", "repro = 2"), ("log_bytes = 4096", "log_bytes = 8")):
+    for old, new in (
+        ("workers = 4", "workers = 3"),
+        ("repro = 1", "repro = 2"),
+        ("log_bytes = 4096", "log_bytes = 8"),
+        ("slow_seconds = 60", "slow_seconds = 5"),
+    ):
         assert runtime.load(_file(tmp_path, _text(tmp_path).replace(old, new))).digest != first.digest
     assert first.digest == keys.digest(
         {
@@ -70,6 +81,9 @@ def test_the_digest_covers_the_resolved_values_and_moves_with_each(tmp_path: Pat
             "cache_bytes": 1000000,
             "cache_keep_seconds": 3600,
             "stage_log_bytes": 4096,
+            "feed": tmp_path / "cache/../feed.jsonl",
+            "slow_seconds": 60,
+            "overrun_percent": 150,
         }
     )
 
@@ -95,7 +109,16 @@ def _refused(tmp_path: Path, text: str) -> runtime.RuntimeConfigError:
 
 
 @pytest.mark.parametrize(
-    "key", ["resources.cores", "resources.reserve_memory", "cache.dir", "cache.keep_seconds", "stages.log_bytes"]
+    "key",
+    [
+        "resources.cores",
+        "resources.reserve_memory",
+        "cache.dir",
+        "cache.keep_seconds",
+        "stages.log_bytes",
+        "events.feed",
+        "events.slow_seconds",
+    ],
 )
 def test_a_missing_key_is_refused_by_file_and_dotted_key(tmp_path: Path, key: str) -> None:
     name = key.partition(".")[2]
@@ -124,10 +147,17 @@ def test_a_missing_capacities_section_is_refused(tmp_path: Path) -> None:
         ("repro = 1", "repro = true", "capacities.repro"),
         ("repro = 1", 'repro = "x"', "capacities.repro"),
         ("bytes = 1000000", "bytes = 1.5", "cache.bytes"),
+        ("overrun_percent = 150", "overrun_percent = 99", "events.overrun_percent"),
+        ("slow_seconds = 60", "slow_seconds = 0", "events.slow_seconds"),
     ],
 )
 def test_a_wrong_value_names_its_key(tmp_path: Path, old: str, new: str, key: str) -> None:
     assert _refused(tmp_path, _text(tmp_path).replace(old, new)).key == key
+
+
+def test_a_relative_feed_is_refused(tmp_path: Path) -> None:
+    text = _text(tmp_path).replace(f'feed = "{tmp_path}/cache/../feed.jsonl"', 'feed = "feed.jsonl"')
+    assert _refused(tmp_path, text).key == "events.feed"
 
 
 def test_a_relative_cache_dir_is_refused(tmp_path: Path) -> None:

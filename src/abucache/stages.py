@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from abucache import feed
+from abucache import runtime as runtime_file
+
 Json = Any
 SCHEMA = "stage/1"
 
@@ -47,7 +50,6 @@ WALL_DEPTH = 3  # stages this shallow report live progress and are remembered in
 REASON_CHARS = 2000  # a finding's reason in the stage log; a compile error quoting whole headers is 100 KB per unit
 
 
-
 def _plain(row: Any) -> dict[str, Any]:
     return dict(row)
 
@@ -63,6 +65,9 @@ _budget_origins: dict[str, Any] = {}
 _package = ""
 _project = ""
 _wait_log: Path | None = None
+_runtime: Any = None  # the runtime `configure` was given; none means each command reads the runtime file itself
+_live: dict[str, _Open] = {}  # the open command, stage and pool spans: what the feed's watchdog looks at
+_root: _Open | None = None  # the command's own span: where a feed that cannot be written reports itself
 
 
 @dataclass(frozen=True)
@@ -91,9 +96,14 @@ def configure(
     """Once per command, by the tool. `runtime` (an `abucache.runtime.Runtime`) gives the stage log's size, the
     parent memory and the memory limit values; each keyword overrides or adds to it. `budgets` turns the watchdog
     on (its findings carry `budget_origins["budgets.<rule>"]`); `package` names the package whose frames an internal
-    error points at; `project` and `wait_log` say who the wait log's lines are for and where they go."""
+    error points at; `project` and `wait_log` say who the wait log's lines are for and where they go.
+
+    Calling this is optional. Every command binds itself to the runtime file (`ABU_RUNTIME`, else the config home's):
+    its `[events]` section sends slow stages and waits to the event feed (`abucache.feed`), and waits of a minute or
+    more go to the slot directory's `waits.jsonl` unless `wait_log` names another file."""
     global LOG_BYTES, parent_memory, _memory_limits, _memory_limit_values, _budgets, _budget_origins
-    global _package, _project, _wait_log
+    global _package, _project, _wait_log, _runtime
+    _runtime = runtime
     if runtime is not None:
         LOG_BYTES = runtime.stage_log_bytes
         parent_memory = runtime.parent_memory
@@ -264,8 +274,54 @@ def waited(seconds: float, what: str = "lock", detail: str = "") -> None:
     if _stack.get():
         _stack.get()[-1].wait += seconds
     _waits[what] = _waits.get(what, 0.0) + seconds
-    if seconds >= WAIT_NOTE and _wait_log is not None:
-        _note_wait(_wait_log, what, seconds, detail)
+    if seconds >= WAIT_NOTE and (log := _wait_log or _slot_wait_log()) is not None:
+        _note_wait(log, what, seconds, detail)
+    if what != "slots" and feed.slow(seconds, None):  # a slot wait is a stage of its own, announced as one
+        here = _stack.get()[-1].path if _stack.get() else ()
+        feed.say(
+            _tool, (*here, f"wait.{what}"), seconds, None, running=False, detail={"detail": detail}, failed=_feed_failed
+        )
+
+
+def _slot_wait_log() -> Path | None:
+    """The host's wait log in the slot directory, when there is a runtime directory to hold it."""
+    base = os.environ.get("XDG_RUNTIME_DIR", "")
+    if not base or not Path(base).is_dir():
+        return None
+    from abucache import slots  # slots imports this module
+
+    return slots.wait_log()
+
+
+def _feed_failed(reason: str) -> None:
+    """The feed could not be written: the command's own span says so once, so the stream going blind is itself seen."""
+    if _root is not None and not any(f["key"] == "events.feed" for f in _root.findings):
+        _root.findings.append(finding("events.feed", f"The event feed cannot be written: {reason}", blocking=False))
+
+
+def _bind() -> str:
+    """Binds the feed and the log size to the runtime for this command: the one `configure` was given, else the runtime
+    file. A missing file leaves the feed off; a file that cannot be read says so (the reason, else empty)."""
+    global LOG_BYTES
+    runtime = _runtime
+    if runtime is None:
+        file = runtime_file.default_path()
+        if not file.is_file():
+            feed.bind(None)
+            return ""
+        try:
+            runtime = runtime_file.load(file)
+        except runtime_file.RuntimeConfigError as error:
+            feed.bind(None)
+            return str(error)
+        LOG_BYTES = runtime.stage_log_bytes
+    feed.bind(runtime)
+    return ""
+
+
+def _open_spans() -> list[feed.Open]:
+    now = time.perf_counter_ns()
+    return [(o.span, o.path, (now - o.start) / 1e9, expected(o.path), o.kind) for o in _live.copy().values()]
 
 
 def _note_wait(path: Path, what: str, seconds: float, detail: str) -> None:
@@ -281,6 +337,7 @@ def _note_wait(path: Path, what: str, seconds: float, detail: str) -> None:
         "detail": detail,
     }
     try:
+        path.parent.mkdir(exist_ok=True)  # the slot directory may not exist yet when only a lock was waited for
         if path.exists() and path.stat().st_size > WAIT_LOG_BYTES:
             kept = path.read_bytes()[-WAIT_LOG_BYTES // 2 :].partition(b"\n")[2]
             part = path.with_name(f".{path.name}.{os.getpid()}")
@@ -475,9 +532,7 @@ def _blame(exc: BaseException) -> str:
         return ""
     marker = f"/{_package}/"
     frames = [
-        f
-        for f in traceback.extract_tb(exc.__traceback__)
-        if marker in f.filename and Path(f.filename).stem != "stages"
+        f for f in traceback.extract_tb(exc.__traceback__) if marker in f.filename and Path(f.filename).stem != "stages"
     ]
     return f" at {Path(frames[-1].filename).stem}:{frames[-1].name}:{frames[-1].lineno}" if frames else ""
 
@@ -488,6 +543,7 @@ def _scope(opened: _Open) -> Iterator[_Open]:
     status = "ok"
     try:
         if opened.kind in ("command", "stage", "pool"):
+            _live[opened.span] = opened
             _notify("open", {"path": list(opened.path), "expected": expected(opened.path), "tool": _tool})
         yield opened
     except BaseException as exc:
@@ -503,6 +559,20 @@ def _scope(opened: _Open) -> Iterator[_Open]:
         try:
             record = _close(opened, status)
             if opened.kind in ("command", "stage", "pool"):
+                _live.pop(opened.span, None)
+                if feed.slow(record.wall_seconds, expected(opened.path)):
+                    detail: dict[str, Any] = {"status": status, "waited_seconds": round(opened.wait, 1)}
+                    if opened.kind == "command":
+                        detail["slot_wait_seconds"] = round(_waits.get("slots", 0.0), 1)
+                    feed.say(
+                        _tool,
+                        opened.path,
+                        record.wall_seconds,
+                        expected(opened.path),
+                        running=False,
+                        detail=detail,
+                        failed=_feed_failed,
+                    )
                 _notify(
                     "close",
                     {
@@ -540,7 +610,7 @@ def _trim(path: Path) -> None:
 def command(tool: str, name: str, argv: Sequence[str], sink: Path) -> Iterator[None]:
     """The outermost span of one invocation of `tool`. Its rows go to `sink` (the stage log) and the previous
     command's walls are read from `walls.json` beside it."""
-    global _closed, _counters, _sink, _tool, _invocation, _seen
+    global _closed, _counters, _sink, _tool, _invocation, _seen, _root
     _closed, _counters, _sink, _tool, _invocation = [], {}, sink, tool, uuid4().hex
     _seen = set()
     _waits.clear()
@@ -555,8 +625,16 @@ def command(tool: str, name: str, argv: Sequence[str], sink: Path) -> Iterator[N
             _trim(sink)
         except OSError:
             pass  # the command's own span carries the finding when its row cannot be written
-        with _scope(_Open(name, "command")):
-            yield None
+        root = _root = _Open(name, "command")
+        if bad := _bind():
+            reason = f"The runtime file is unusable, so no slow stage reaches the feed: {bad}"
+            root.findings.append(finding("events.runtime", reason, blocking=False))
+        with _scope(root):
+            feed.start(tool, _open_spans, _feed_failed)
+            try:
+                yield None
+            finally:
+                feed.stop()
     finally:
         _stack.reset(token)
         _save_walls()
@@ -618,9 +696,7 @@ def record_pool(
             values.update(_limits())
             values["cache"] = {k: tuple(v) for k, v in raw.get("cache", {}).items()}
             values["findings"] = tuple(
-                finding(
-                    **{**f, "versions": tuple(f.get("versions", ())), "missing": tuple(f.get("missing", ()))}
-                )
+                finding(**{**f, "versions": tuple(f.get("versions", ())), "missing": tuple(f.get("missing", ()))})
                 for f in raw.get("findings", [])
             )
             shipped.append((StageRecord(**values), raw["span"] not in parents))

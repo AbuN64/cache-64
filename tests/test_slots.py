@@ -169,6 +169,45 @@ class TestCapacities:
             assert (pool / "cap-repro" / "token-0.lock").read_text() == str(os.getpid())
         released.join()
 
+    def test_capacity_waiters_are_served_in_arrival_order_and_none_is_passed_over(self, pool, make_runtime):
+        runtime = make_runtime(capacities={"repro": 1})
+        cap = pool / "cap-repro"
+        cap.mkdir()
+        peer = hold(cap / "token-0.lock", str(os.getppid()))
+        order: list[str] = []
+        gates = {"a": threading.Event(), "b": threading.Event(), "c": threading.Event()}
+
+        def waiter(tag):
+            with slots.Slots(runtime).capacity("repro"):
+                order.append(tag)
+                gates[tag].wait(30)
+
+        def until(condition):
+            deadline = time.monotonic() + 30
+            while not condition():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+
+        threads = []
+        for count, tag in enumerate("abc", 1):  # each is queued before the next one asks
+            threads.append(threading.Thread(target=waiter, args=(tag,)))
+            threads[-1].start()
+            until(lambda count=count: len(list(cap.glob("wait-*"))) == count)
+        drop(peer)  # the token frees: it is a's, not whoever asks next
+        for tag, thread in zip("abc", threads, strict=True):
+            until(lambda tag=tag: tag in order)
+            assert order == list("abc")[: order.index(tag) + 1]  # nobody ahead of its turn
+            gates[tag].set()
+            thread.join(30)
+        assert order == ["a", "b", "c"] and not list(cap.glob("wait-*"))
+
+    def test_the_ticket_of_a_dead_capacity_waiter_holds_nobody_back(self, pool, make_runtime):
+        cap = pool / "cap-repro"
+        cap.mkdir()
+        (cap / "wait-00000000000000000001-999999").touch()  # nobody holds its lock: its owner is gone
+        with slots.Slots(make_runtime(capacities={"repro": 1})).capacity("repro"):
+            assert (cap / "token-0.lock").read_text() == str(os.getpid())
+
     def test_a_capacity_of_two_admits_two(self, pool, make_runtime):
         mine = slots.Slots(make_runtime(capacities={"repro": 2}))
         with mine.capacity("repro"), mine.capacity("repro"):
