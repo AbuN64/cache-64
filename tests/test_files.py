@@ -102,7 +102,7 @@ def test_a_blocked_lock_reports_its_wait(tmp_path: Path, monkeypatch: pytest.Mon
     proc = multiprocessing.get_context("fork").Process(target=_hold, args=(lock, started, release))
     proc.start()
     waits: list[tuple[float, str, str]] = []
-    monkeypatch.setattr(files, "waited", lambda *news: waits.append(news))
+    monkeypatch.setattr(files.stages, "waited", lambda *news: waits.append(news))
     try:
         _wait(started)
         threading.Timer(0.3, release.write_text, ["go"]).start()
@@ -116,7 +116,7 @@ def test_a_blocked_lock_reports_its_wait(tmp_path: Path, monkeypatch: pytest.Mon
 
 def test_a_lock_that_is_free_reports_no_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     waits: list[object] = []
-    monkeypatch.setattr(files, "waited", lambda *news: waits.append(news))
+    monkeypatch.setattr(files.stages, "waited", lambda *news: waits.append(news))
     with files.lock(tmp_path / "l"):
         pass
     assert waits == []

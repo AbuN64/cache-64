@@ -1,0 +1,362 @@
+{
+ "busy_seconds": 0.0,
+ "cache": {
+  "object": [
+   2,
+   2
+  ]
+ },
+ "children": [
+  {
+   "busy_seconds": 0.0,
+   "cache": {
+    "object": [
+     1,
+     1
+    ]
+   },
+   "children": [
+    {
+     "busy_seconds": 0.0,
+     "cache": {},
+     "children": [],
+     "cores": 1.5,
+     "dispatch_seconds": 0.0,
+     "execution": "serial",
+     "findings": [],
+     "invocation": "00000000000000000000000000000001",
+     "items": 0,
+     "jobs": 0,
+     "kind": "native",
+     "lock_wait_seconds": 0.0,
+     "memory_limit_values": {},
+     "memory_limits": {},
+     "native_cpu_seconds": 0.75,
+     "parent": "00000000000000000000000000000003",
+     "parent_cpu_seconds": 0,
+     "parent_rss_peak_bytes": 0,
+     "path": [
+      "check",
+      "outer",
+      "cc"
+     ],
+     "slot_seconds": 0.0,
+     "slot_wait_seconds": 0.0,
+     "span": "00000000000000000000000000000004",
+     "spans": 1,
+     "start_ns": 1200000000,
+     "status": "ok",
+     "wait_seconds": 0.0,
+     "wall_seconds": 0.5,
+     "worker_cpu_seconds": 0,
+     "worker_rss_peak_bytes": 4096,
+     "workers_admitted": 0,
+     "workers_used": 0
+    },
+    {
+     "busy_seconds": 0.0,
+     "cache": {},
+     "children": [],
+     "cores": 5.000000000000001,
+     "dispatch_seconds": 0.0,
+     "execution": "serial",
+     "findings": [],
+     "invocation": "00000000000000000000000000000001",
+     "items": 0,
+     "jobs": 0,
+     "kind": "own",
+     "lock_wait_seconds": 0.0,
+     "memory_limit_values": {},
+     "memory_limits": {},
+     "native_cpu_seconds": 0,
+     "parent": "00000000000000000000000000000003",
+     "parent_cpu_seconds": 0.5,
+     "parent_rss_peak_bytes": 0,
+     "path": [
+      "check",
+      "outer",
+      "(own)"
+     ],
+     "slot_seconds": 0.0,
+     "slot_wait_seconds": 0.0,
+     "span": "00000000000000000000000000000005",
+     "spans": 1,
+     "start_ns": 1100000000,
+     "status": "ok",
+     "wait_seconds": 0.0,
+     "wall_seconds": 0.09999999999999998,
+     "worker_cpu_seconds": 0,
+     "worker_rss_peak_bytes": 0,
+     "workers_admitted": 0,
+     "workers_used": 0
+    }
+   ],
+   "cores": 4.166666666666667,
+   "dispatch_seconds": 0.0,
+   "execution": "serial",
+   "findings": [
+    {
+     "action": "",
+     "blocking": false,
+     "key": "note.one",
+     "line": 3,
+     "missing": [],
+     "origin": null,
+     "path": "a.c",
+     "reason": "first",
+     "symptoms": {},
+     "unit": "",
+     "versions": []
+    }
+   ],
+   "invocation": "00000000000000000000000000000001",
+   "items": 2,
+   "jobs": 0,
+   "kind": "stage",
+   "lock_wait_seconds": 0.0,
+   "memory_limit_values": {},
+   "memory_limits": {},
+   "native_cpu_seconds": 0.75,
+   "parent": "00000000000000000000000000000002",
+   "parent_cpu_seconds": 0.5,
+   "parent_rss_peak_bytes": 1024000,
+   "path": [
+    "check",
+    "outer"
+   ],
+   "slot_seconds": 0.0,
+   "slot_wait_seconds": 0.0,
+   "span": "00000000000000000000000000000003",
+   "spans": 1,
+   "start_ns": 1100000000,
+   "status": "ok",
+   "wait_seconds": 1.5,
+   "wall_seconds": 0.3,
+   "worker_cpu_seconds": 0,
+   "worker_rss_peak_bytes": 4096,
+   "workers_admitted": 0,
+   "workers_used": 0
+  },
+  {
+   "busy_seconds": 0.0,
+   "cache": {
+    "object": [
+     0,
+     0
+    ]
+   },
+   "children": [],
+   "cores": 2.5,
+   "dispatch_seconds": 0.0,
+   "execution": "serial",
+   "findings": [
+    {
+     "action": "",
+     "blocking": true,
+     "key": "worker.memory",
+     "line": 0,
+     "missing": [
+      "a"
+     ],
+     "origin": null,
+     "path": "",
+     "reason": "too big",
+     "symptoms": {},
+     "unit": "",
+     "versions": []
+    }
+   ],
+   "invocation": "00000000000000000000000000000001",
+   "items": 0,
+   "jobs": 0,
+   "kind": "stage",
+   "lock_wait_seconds": 0.0,
+   "memory_limit_values": {},
+   "memory_limits": {},
+   "native_cpu_seconds": 0,
+   "parent": "00000000000000000000000000000002",
+   "parent_cpu_seconds": 0.25,
+   "parent_rss_peak_bytes": 1024000,
+   "path": [
+    "check",
+    "refused"
+   ],
+   "slot_seconds": 0.0,
+   "slot_wait_seconds": 0.0,
+   "span": "00000000000000000000000000000006",
+   "spans": 1,
+   "start_ns": 1500000000,
+   "status": "refused",
+   "wait_seconds": 0.0,
+   "wall_seconds": 0.1,
+   "worker_cpu_seconds": 0,
+   "worker_rss_peak_bytes": 0,
+   "workers_admitted": 0,
+   "workers_used": 0
+  },
+  {
+   "busy_seconds": 0.75,
+   "cache": {
+    "object": [
+     1,
+     1
+    ]
+   },
+   "children": [
+    {
+     "busy_seconds": 0.0,
+     "cache": {
+      "view": [
+       1,
+       2
+      ]
+     },
+     "children": [],
+     "cores": 0.5,
+     "dispatch_seconds": 0.0,
+     "execution": "serial",
+     "findings": [
+      {
+       "action": "",
+       "blocking": true,
+       "key": "k",
+       "line": 0,
+       "missing": [],
+       "origin": null,
+       "path": "",
+       "reason": "r",
+       "symptoms": {},
+       "unit": "",
+       "versions": []
+      }
+     ],
+     "invocation": "00000000000000000000000000000001",
+     "items": 1,
+     "jobs": 0,
+     "kind": "job",
+     "lock_wait_seconds": 0.0,
+     "memory_limit_values": {},
+     "memory_limits": {},
+     "native_cpu_seconds": 0.0,
+     "parent": "00000000000000000000000000000007",
+     "parent_cpu_seconds": 0,
+     "parent_rss_peak_bytes": 0,
+     "path": [
+      "check",
+      "units",
+      "job"
+     ],
+     "slot_seconds": 0.0,
+     "slot_wait_seconds": 0.0,
+     "span": "00000000000000000000000000000008",
+     "spans": 1,
+     "start_ns": 5,
+     "status": "ok",
+     "wait_seconds": 0.125,
+     "wall_seconds": 0.5,
+     "worker_cpu_seconds": 0.25,
+     "worker_rss_peak_bytes": 7,
+     "workers_admitted": 0,
+     "workers_used": 0
+    }
+   ],
+   "cores": 7.5,
+   "dispatch_seconds": 0.125,
+   "execution": "serial",
+   "findings": [],
+   "invocation": "00000000000000000000000000000001",
+   "items": 4,
+   "jobs": 4,
+   "kind": "pool",
+   "lock_wait_seconds": 0.0,
+   "memory_limit_values": {},
+   "memory_limits": {},
+   "native_cpu_seconds": 0.5,
+   "parent": "00000000000000000000000000000002",
+   "parent_cpu_seconds": 0,
+   "parent_rss_peak_bytes": 0,
+   "path": [
+    "check",
+    "units"
+   ],
+   "slot_seconds": 0.0,
+   "slot_wait_seconds": 0.0,
+   "span": "00000000000000000000000000000007",
+   "spans": 1,
+   "start_ns": 1700000000,
+   "status": "ok",
+   "wait_seconds": 0.25,
+   "wall_seconds": 0.2,
+   "worker_cpu_seconds": 1.0,
+   "worker_rss_peak_bytes": 2048,
+   "workers_admitted": 2,
+   "workers_used": 1
+  },
+  {
+   "busy_seconds": 0.0,
+   "cache": {},
+   "children": [],
+   "cores": 3.75,
+   "dispatch_seconds": 0.0,
+   "execution": "serial",
+   "findings": [],
+   "invocation": "00000000000000000000000000000001",
+   "items": 0,
+   "jobs": 0,
+   "kind": "own",
+   "lock_wait_seconds": 0.0,
+   "memory_limit_values": {},
+   "memory_limits": {},
+   "native_cpu_seconds": 0,
+   "parent": "00000000000000000000000000000002",
+   "parent_cpu_seconds": 1.5,
+   "parent_rss_peak_bytes": 0,
+   "path": [
+    "check",
+    "(own)"
+   ],
+   "slot_seconds": 0.0,
+   "slot_wait_seconds": 0.0,
+   "span": "00000000000000000000000000000009",
+   "spans": 1,
+   "start_ns": 1000000000,
+   "status": "ok",
+   "wait_seconds": 0.0,
+   "wall_seconds": 0.4,
+   "worker_cpu_seconds": 0,
+   "worker_rss_peak_bytes": 0,
+   "workers_admitted": 0,
+   "workers_used": 0
+  }
+ ],
+ "cores": 4.5,
+ "dispatch_seconds": 0.0,
+ "execution": "serial",
+ "findings": [],
+ "invocation": "00000000000000000000000000000001",
+ "items": 4,
+ "jobs": 4,
+ "kind": "command",
+ "lock_wait_seconds": 1.5,
+ "memory_limit_values": {},
+ "memory_limits": {},
+ "native_cpu_seconds": 1.25,
+ "parent": null,
+ "parent_cpu_seconds": 2.25,
+ "parent_rss_peak_bytes": 1024000,
+ "path": [
+  "check"
+ ],
+ "slot_seconds": 0.0,
+ "slot_wait_seconds": 0.0,
+ "span": "00000000000000000000000000000002",
+ "spans": 1,
+ "start_ns": 1000000000,
+ "status": "ok",
+ "wait_seconds": 0.0,
+ "wall_seconds": 1.0,
+ "worker_cpu_seconds": 1.0,
+ "worker_rss_peak_bytes": 4096,
+ "workers_admitted": 2,
+ "workers_used": 1
+}

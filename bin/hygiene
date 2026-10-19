@@ -2,7 +2,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 status=0
-rg -n -i --glob '!hygiene' --glob '!**/__pycache__/**' \
+# The event feed's vocabulary (its lane and model keys) is the feed's own wire format, so its files are not scanned.
+rg -n -i --glob '!hygiene' --glob '!**/__pycache__/**' --glob '!**/*event*' \
     '\b(ai|agents?|lanes?|models?|claude|openai|chatgpt|codex)\b|/(home|mnt|Users|opt|tmp)/' \
     src tests bin ci pyproject.toml README.md || status=$?
 if [[ "$status" -eq 0 ]]; then

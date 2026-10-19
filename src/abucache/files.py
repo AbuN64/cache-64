@@ -14,15 +14,12 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
+from abucache import stages
+
 _CLOCK: Callable[[], float] = time.monotonic  # replaced by tests so a deadline passes without waiting
 _PAUSE: Callable[[float], None] = time.sleep
 _POLL_S = 0.2
 _HELD_FDS: set[int] = set()  # the descriptors whose flock this process holds now
-
-
-def waited(seconds: float, what: str, detail: str) -> None:
-    """Called once for every lock that blocked, with the seconds it blocked: the hook that lets the stage recorder
-    show what a command waited on. Replaced by `abucache.stages`; a bare use of this module drops the news."""
 
 
 def write(path: Path, content: bytes) -> bool:
@@ -103,7 +100,7 @@ def _flock(path: Path, flags: int, *, wait: bool = True, wait_s: float | None = 
                 taken = True
             else:
                 taken = _poll(fd, flags, wait_s)
-            waited(time.perf_counter() - start, "lock", path.name)
+            stages.waited(time.perf_counter() - start, "lock", path.name)
             if not taken:
                 yield None
                 return

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AbuN64/cake-taste-64/event.schema.json",
+  "title": "Cake Taste event",
+  "description": "One line of an append-only event feed. Schema 2 is additive over schema 1; schema 1 lines stay valid as written.",
+  "oneOf": [{"$ref": "#/$defs/schema1"}, {"$ref": "#/$defs/schema2"}],
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "time": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["info", "started", "passed", "failed", "blocked", "decision", "handoff"]},
+    "evidencePath": {"oneOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]},
+    "evidenceObject": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {"path": {"$ref": "#/$defs/text"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    },
+    "schema1": {
+      "type": "object",
+      "required": ["schema", "time", "actor", "status", "message", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": 1},
+        "time": {"$ref": "#/$defs/time"},
+        "actor": {"$ref": "#/$defs/text"},
+        "status": {"$ref": "#/$defs/status"},
+        "message": {"$ref": "#/$defs/text"},
+        "evidence": {"$ref": "#/$defs/evidencePath"},
+        "kind": {"$ref": "#/$defs/text"},
+        "payload": {"type": "object"}
+      }
+    },
+    "schema2": {
+      "type": "object",
+      "required": ["schema", "time", "actor", "status", "message", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": 2},
+        "time": {"$ref": "#/$defs/time"},
+        "actor": {"$ref": "#/$defs/text"},
+        "status": {"$ref": "#/$defs/status"},
+        "message": {"$ref": "#/$defs/text"},
+        "evidence": {"oneOf": [{"$ref": "#/$defs/evidencePath"}, {"$ref": "#/$defs/evidenceObject"}]},
+        "kind": {"enum": ["RUN-FAIL", "PROBE", "MATCH", "HANDOFF", "LAND", "LANE", "DECISION"]},
+        "payload": {"type": "object"},
+        "subject": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "repo": {"$ref": "#/$defs/text"},
+            "ref": {"$ref": "#/$defs/text"},
+            "version": {"$ref": "#/$defs/text"},
+            "function": {"$ref": "#/$defs/text"},
+            "address": {"type": "string", "pattern": "^0x[0-9A-Fa-f]+$"}
+          }
+        },
+        "lane": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {"$ref": "#/$defs/text"},
+            "kind": {"enum": ["tooling", "impl"]},
+            "model": {"$ref": "#/$defs/text"},
+            "track": {"enum": ["official", "experiment"]}
+          }
+        }
+      }
+    }
+  },
+  "x-schema1-kinds": {"PORT-FAIL": "RUN-FAIL", "DECOMP": "MATCH", "COMMIT": "LAND"}
+}
