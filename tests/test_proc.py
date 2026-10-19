@@ -16,7 +16,7 @@ from unittest.mock import Mock
 import psutil
 import pytest
 
-from abucache import proc
+from abucache import proc, slots
 
 
 def test_exit_and_streams_kept(tmp_path: Path) -> None:
@@ -39,9 +39,17 @@ def test_a_missing_program_raises_oserror(tmp_path: Path) -> None:
         proc.run((str(tmp_path / "absent"),), tmp_path, tmp=tmp_path / "tmp")
 
 
-def test_cores_zero_and_more_run_alike_until_slots_land(tmp_path: Path) -> None:
-    for cores in (0, 2):
-        assert proc.run(("/bin/true",), tmp_path, tmp=tmp_path / "tmp", cores=cores).exit == 0
+def test_cores_hold_slots_for_the_childs_life_and_tell_it_the_grant(
+    tmp_path: Path, rundir: Path, make_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(slots, "default", slots.Slots(make_runtime(workers=4)))
+    argv = ("/bin/sh", "-c", "echo ${UNBAKE_CORES:-none}; ls " + str(rundir / slots.POOL) + " 2>&1; true")
+    plain = proc.run(argv, tmp_path, tmp=tmp_path / "tmp")
+    assert plain.exit == 0 and plain.stdout.startswith(b"none\n")  # a control-plane call holds nothing
+    held = proc.run(argv, tmp_path, tmp=tmp_path / "tmp", cores=2)
+    assert held.exit == 0 and held.stdout.startswith(b"2\n")
+    assert b"slot-0.lock" in held.stdout and b"slot-1.lock" in held.stdout
+    assert not list((rundir / slots.POOL).glob("cmd-*.lock"))  # and gives them back
 
 
 def test_concurrent_cpu_attributed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

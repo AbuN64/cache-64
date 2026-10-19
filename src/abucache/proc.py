@@ -17,6 +17,8 @@ from pathlib import Path
 from time import perf_counter_ns
 from typing import IO
 
+from abucache import slots
+
 _PR_SET_CHILD_SUBREAPER = 36  # linux/prctl.h
 
 
@@ -74,14 +76,15 @@ def run(
 ) -> Completed:
     """Run one child in its own process group and session with TMPDIR=`tmp`, feeding `stdin` and collecting both
     streams (stdout goes to `stdout_path` when given). A `timeout` kills the whole group. Raises OSError when the
-    child cannot start. `cores` is inert until the slot layer lands: control-plane calls pass 0."""
-    del cores
+    child cannot start. `cores` > 0 holds that many slots (at most the host's fair share) for the child's life and
+    tells it the grant as UNBAKE_CORES; control-plane calls (git, systemctl, ssh) pass 0 and hold none."""
     tmp.mkdir(parents=True, exist_ok=True)
     start = perf_counter_ns()
     subreaper()
     deadline = None if timeout is None else start + timeout * 1_000_000_000
     streams = {"stdout": bytearray(), "stderr": bytearray()}
     with ExitStack() as stack:
+        granted = {slots.CORES_ENV: str(stack.enter_context(slots.cores(cores)))} if cores > 0 else {}
         destination: int | IO[bytes] = subprocess.PIPE
         if stdout_path is not None:
             destination = stack.enter_context(stdout_path.open("wb"))
@@ -92,7 +95,7 @@ def run(
             stdout=destination,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            env={**os.environ, **env, "TMPDIR": str(tmp)},
+            env={**os.environ, **env, **granted, "TMPDIR": str(tmp)},
             pass_fds=tuple(pass_fds),
         )
         try:

@@ -54,7 +54,9 @@ START = ContentCache._start_collect  # the real one: the fixture below records i
 def started(monkeypatch):
     """The collects a finish started, recorded in place of a detached process."""
     calls = []
-    monkeypatch.setattr(ContentCache, "_start_collect", lambda self, installed, keep: calls.append((installed, keep)))
+    monkeypatch.setattr(
+        ContentCache, "_start_collect", lambda self, installed, keep, seconds: calls.append((installed, keep))
+    )
     return calls
 
 
@@ -193,7 +195,7 @@ def test_put_many_stores_every_item_under_the_put_keys(tmp_path):
 
 
 def test_version_is_one_exact_string():
-    assert abucache.__version__ == "0.5.0"
+    assert abucache.__version__ == "0.6.0"
 
 
 def test_failed_is_a_non_zero_exit_or_a_signal():
@@ -467,10 +469,10 @@ class TestCollectOffThePath:
         seen = []
         fake = SimpleNamespace(Popen=lambda argv, **kw: seen.append((argv, kw)), DEVNULL=subprocess.DEVNULL)
         monkeypatch.setattr(store, "subprocess", fake)
-        START(cache, module_level_check, 5)
+        START(cache, module_level_check, 5, 3600)
         (argv, kw), = seen
         assert argv == [sys.executable, "-m", "abucache.collect", str(tmp_path / "store"), "1234", "5",
-                        f"{__name__}:module_level_check"]
+                        f"{__name__}:module_level_check", "3600"]
         assert kw["start_new_session"] and kw["close_fds"] and kw["stdin"] == subprocess.DEVNULL
         assert kw["stdout"].name == str(tmp_path / "store" / "collect.log")
         assert sys.path[0] in kw["env"]["PYTHONPATH"].split(":") or not sys.path[0]

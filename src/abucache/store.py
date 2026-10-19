@@ -9,14 +9,17 @@ import importlib
 import json
 import logging
 import os
+import pickle
 import shutil
 import subprocess
 import sys
 import time
 import uuid
+import zlib
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TypeVar
 
 import diskcache
 
@@ -31,6 +34,7 @@ OVER_LIMIT_EVERY = 300  # while over size_limit a command's end collects again a
 GRACE = 6 * 3600  # the longest a command may run before it writes its manifest: younger unreferenced entries are kept
 DISK_FULL = 0.8  # fraction of the disk used above which the size backstop acts
 KEEP_COMMITS = 20
+KEEP_SECONDS = 7 * 24 * 3600  # a root without git history keeps its entries live this long (runtime cache.keep_seconds)
 BATCH = 10_000
 WORKERS = os.cpu_count() or 1
 BACKSTOP_BATCH = 500  # the backstop checks the volume after every batch, so it stops close to its target
@@ -140,6 +144,7 @@ class ContentCache:
         identity: str,
         installed: Callable[[str], bool] = everything,
         keep_commits: int = KEEP_COMMITS,
+        keep_seconds: int = KEEP_SECONDS,
     ) -> None:
         """End of a command: record the keys it read or wrote as one manifest for this project root, code identity and
         tree digest. When the last collect is a day old, or the cache is over its limit and the last collect is a few
@@ -153,14 +158,15 @@ class ContentCache:
         since = float("inf") if last is None else now - float(last)
         if since >= COLLECT_EVERY or (since >= OVER_LIMIT_EVERY and self._cache.volume() > self._size_limit):
             self._cache.set(_LAST_COLLECT, str(now).encode())
-            self._start_collect(installed, keep_commits)
+            self._start_collect(installed, keep_commits, keep_seconds)
 
-    def _start_collect(self, installed: Callable[[str], bool], keep_commits: int) -> None:
+    def _start_collect(self, installed: Callable[[str], bool], keep_commits: int, keep_seconds: int) -> None:
         """Run `python -m abucache.collect` for this cache in a new session, its output in collect.log beside the
         cache. No descriptor of this process reaches it, so neither a pipe reading this command nor a lock it holds
         waits on the collect."""
         argv = [sys.executable, "-m", "abucache.collect", str(self.directory), str(self._size_limit),
-                str(keep_commits), _name_of(installed)]
+                str(keep_commits), _name_of(installed),
+                str(keep_seconds)]
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
         with open(self.directory / "collect.log", "wb") as out:
             subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=out, env=env, close_fds=True,
@@ -180,11 +186,14 @@ class ContentCache:
         installed: Callable[[str], bool] = everything,
         now: float | None = None,
         keep_commits: int = KEEP_COMMITS,
+        keep_seconds: int = KEEP_SECONDS,
     ) -> int:
         """Delete every entry no live manifest references and return how many. A manifest is live while its root
         directory exists and its code identity is installed, and for a root the trees that count are the HEAD tree
         of the root and of each worktree of its repository, the trees of the last `keep_commits` commits of its HEAD,
-        and the newest tree it recorded. Entries stored within the grace period are kept, as their command may not
+        and the newest tree it recorded. A root with no git tree has no trees to count: its manifests are live while
+        younger than `keep_seconds`, and its newest one is always live. Entries stored within the grace period are
+        kept, as their command may not
         have finished. When that leaves the cache over its limit on a disk above DISK_FULL used, unreferenced entries
         go oldest first whatever their age, and when it is still over, writes are refused until a collect fits.
         One collect runs per cache at a time: another that finds one running returns 0 at once."""
@@ -193,32 +202,41 @@ class ContentCache:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return 0
-            return self._collect(installed, now or time.time(), keep_commits)
+            return self._collect(installed, now or time.time(), keep_commits, keep_seconds)
 
-    def _collect(self, installed: Callable[[str], bool], now: float, keep_commits: int) -> int:
+    def _collect(self, installed: Callable[[str], bool], now: float, keep_commits: int, keep_seconds: int) -> int:
         manifests: dict[str, dict] = {}
         for name in self._manifest_keys():
             raw = self._cache.get(name)
             if raw is not None:
                 manifests[name] = json.loads(raw)
-        newest: dict[tuple[str, str], tuple[float, str]] = {}
-        for body in manifests.values():
+        newest: dict[tuple[str, str], tuple[float, str, str]] = {}
+        for name, body in manifests.items():
             group = (body["root"], body["identity"])
-            newest[group] = max(newest.get(group, (0.0, "")), (body["at"], body["tree"]))
+            newest[group] = max(newest.get(group, (0.0, "", "")), (body["at"], body["tree"], name))
         roots = sorted({body["root"] for body in manifests.values() if Path(body["root"]).is_dir()})
         with ThreadPoolExecutor(WORKERS) as pool:  # each root is a few git processes
             trees = dict(zip(roots, pool.map(lambda root: _live_trees(Path(root), keep_commits), roots), strict=True))
         alive_code: dict[str, bool] = {}
         live: set[str] = set()
         merged: dict[tuple[str, str, str], dict] = {}
-        for body in manifests.values():
+        aged: set[str] = set()  # live manifests of roots without a git tree: kept as written, each has its own age
+        for name, body in manifests.items():
             root, identity, tree = body["root"], body["identity"], body["tree"]
             if root not in trees:
                 continue
             if identity not in alive_code:
                 alive_code[identity] = installed(identity)
-            if alive_code[identity] and (tree in trees[root] or tree == newest[(root, identity)][1]):
+            latest = newest[(root, identity)]
+            if tree:  # a git tree: one of the live trees of the root, or the newest tree it recorded
+                kept = tree in trees[root] or tree == latest[1]
+            else:  # no git tree to name: young, or the newest manifest of the group
+                kept = now - body["at"] < keep_seconds or name == latest[2]
+            if alive_code[identity] and kept:
                 live.update(body["keys"])
+                if not tree:
+                    aged.add(name)
+                    continue
                 into = merged.setdefault((root, identity, tree), {**body, "keys": []})
                 into["keys"] = sorted(set(into["keys"]) | set(body["keys"]))
                 into["at"] = max(into["at"], body["at"])
@@ -229,7 +247,7 @@ class ContentCache:
             if isinstance(key, str) and not key.startswith((_MANIFEST, _LAST_COLLECT, _FULL)) and key not in live
         ]
         with self._cache.transact():
-            for name in manifests:
+            for name in manifests.keys() - aged:
                 self._cache.delete(name)
             for body in merged.values():
                 self._write_manifest(body["root"], body["identity"], body["tree"], body["keys"], body["at"])
@@ -324,3 +342,84 @@ def absorb_touched(taken: dict[str, list[str]]) -> None:
     for directory, keys in taken.items():
         if directory in _OPEN:
             _OPEN[directory]._touched.update(keys)
+
+
+_PACKED = b"\x02"  # format tag of a stored value: a value without it (an older entry) reads as a miss
+
+
+def _frame(value: bytes) -> bytes:
+    """The stored form of bytes: the format tag, the crc32 of the bytes, then the bytes zlib level 1 compressed."""
+    return _PACKED + zlib.crc32(value).to_bytes(4, "big") + zlib.compress(value, 1)
+
+
+def _unframe(blob: bytes | None) -> bytes | None:
+    """The bytes `_frame` packed, or None for a missing, foreign, torn or older-format blob."""
+    if not blob or blob[:1] != _PACKED or len(blob) < 5:
+        return None
+    try:
+        value = zlib.decompress(blob[5:])
+    except zlib.error:
+        return None
+    return value if zlib.crc32(value).to_bytes(4, "big") == blob[1:5] else None
+
+
+def pack(obj: object) -> bytes:
+    """The stored form of an object: pickle protocol 5, framed (tag, crc32, zlib level 1). Entries older unbake
+    versions wrote with their `Packed` cache have this exact form, so they read back through `unpack`."""
+    return _frame(pickle.dumps(obj, protocol=5))
+
+
+def unpack(blob: bytes | None) -> tuple[bool, object]:
+    """(True, the object) of a `pack` blob; (False, None) when it is absent, torn, of another format, or a pickle
+    this build cannot read: such an entry is a miss, never a crash."""
+    raw = _unframe(blob)
+    if raw is None:
+        return False, None
+    try:
+        return True, pickle.loads(raw)
+    except Exception:
+        return False, None
+
+
+T = TypeVar("T")
+
+
+class Namespace:
+    """One tool's key space of one kind in the host cache: its entries are `"<tool>.<kind>:<key>"`, so two tools (or two
+    kinds) never read each other's keys however they name them. A key must name every input of the value: nothing here
+    adds the code's identity. Values are stored framed and compressed; a write the full cache refuses raises
+    `CacheFull`."""
+
+    def __init__(self, cache: ContentCache, tool: str, kind: str) -> None:
+        self.cache, self.kind = cache, f"{tool}.{kind}"
+
+    def get(self, key: str) -> bytes | None:
+        """The value of `key`, or None; reads count nothing."""
+        return _unframe(self.cache.get(self.kind, key))
+
+    def put(self, key: str, value: bytes) -> None:
+        self.cache.put(self.kind, key, _frame(value))
+
+    def put_many(self, rows: Iterable[tuple[str, bytes]]) -> None:
+        """Entries in one write transaction: tens of thousands of single writes queue on the cache's one writer."""
+        self.cache.put_many((self.kind, key, _frame(value)) for key, value in rows)
+
+    def cached(self, key: str, produce: Callable[[], bytes]) -> bytes:
+        """The value of `key`; a miss produces without any lock and stores it, counted as a hit or a miss."""
+        value = self.get(key)
+        hit = value is not None
+        if value is None:
+            value = produce()
+            self.put(key, value)
+        self.cache.count(self.kind, hit)
+        return value
+
+    def cached_object(self, key: str, produce: Callable[[], T]) -> T:
+        """`cached` for any picklable object: an entry this build cannot unpickle is produced again."""
+        found, value = unpack(self.cache.get(self.kind, key))
+        self.cache.count(self.kind, found)
+        if found:
+            return value  # type: ignore[return-value]
+        value = produce()
+        self.cache.put(self.kind, key, pack(value))
+        return value
